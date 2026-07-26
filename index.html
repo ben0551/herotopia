@@ -78,6 +78,32 @@ body {
   text-shadow: 1px 2px 4px rgba(0,0,0,0.3);
 }
 .play-btn:hover { transform: scale(1.08); box-shadow: 0 10px 40px rgba(255,107,53,0.7); }
+.map-select { display:flex; gap:10px; margin-bottom:26px; flex-wrap:wrap; justify-content:center; max-width:560px; }
+.map-btn {
+  min-width: 84px; padding: 8px 12px; border-radius: 10px; cursor: pointer;
+  background: linear-gradient(180deg, #2a1838, #180c24);
+  border: 2px solid #5e2de8; color: #ddd; font-size: 12px; text-align: center;
+  transition: transform 0.1s;
+}
+.map-btn .map-num { font-weight: 900; font-size: 16px; color: #ffd700; display:block; }
+.map-btn:hover:not(.locked) { transform: scale(1.06); }
+.map-btn.selected { border-color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,0.6); }
+.map-btn.locked { opacity: 0.4; cursor: not-allowed; border-color: #444; }
+.map-btn.locked .map-num { color: #888; }
+.continue-btn {
+  background: linear-gradient(135deg, #2ecc71, #1a8f52);
+  color: white; border: none; padding: 12px 40px; border-radius: 40px;
+  font-size: 18px; font-weight: 900; cursor: pointer; letter-spacing: 1.5px;
+  box-shadow: 0 4px 20px rgba(46,204,113,0.5); margin-bottom: 14px;
+  text-shadow: 1px 2px 4px rgba(0,0,0,0.3);
+}
+.continue-btn:hover { transform: scale(1.05); }
+.reset-btn {
+  background: none; border: 1px solid #7a2020; color: #d67070;
+  padding: 5px 14px; border-radius: 14px; font-size: 11px; cursor: pointer;
+  margin-top: 10px; letter-spacing: 0.5px;
+}
+.reset-btn:hover { background: rgba(231,76,60,0.15); }
 .tips {
   margin-top: 30px;
   color: #6c3de8;
@@ -95,15 +121,18 @@ body {
 <div id="overlay">
   <div class="big-title">HEROTOPIA</div>
   <div class="subtitle">⚔️ Epic Tower Defense Adventure ⚔️</div>
-  <div class="hero-row">🏹 🔥 ⚔️ ❄️ 🛡️</div>
+  <div class="hero-row">🏹 🔥 ⚔️ ❄️ 🛡️ 🌾</div>
+  <div id="mapSelect" class="map-select"></div>
+  <div id="continueRow"></div>
   <button class="play-btn" onclick="startGame()">▶ PLAY NOW!</button>
   <div id="prestigeDisplay" class="tips" style="margin-top:14px;font-size:16px;"></div>
   <div class="tips">
-    <span>Q W E R T</span> — pick a hero &nbsp;|&nbsp; <span>Click map</span> — place hero<br>
-    <span>Soldiers</span> plants a warrior right on the path to block & melee foes<br>
+    <span>Q W E R T Y</span> — pick a hero &nbsp;|&nbsp; <span>Click map</span> — place hero<br>
+    <span>Soldiers</span> block & melee the path; <span>Farm</span> earns passive gold<br>
     <span>Space</span> — start next wave &nbsp;|&nbsp; <span>Click hero</span> — upgrade/sell<br>
     Enemies reach the gate? You lose a life! Don't let them through! 💀
   </div>
+  <button id="resetBtn" class="reset-btn">↻ Reset All Progress</button>
 </div>
 
 <script>
@@ -135,34 +164,44 @@ const UI_H  = 155;
 canvas.width  = MAP_W;
 canvas.height = MAP_H + UI_H;
 
-// ── Path waypoints (pixel centres). Lane A is the original upper path;
-// lane B is a second route opened mid-game so late waves attack from two
-// fronts at once (Kingdom Rush-style). The two never share a cell.
-const WAYPOINTS_A = [
-  {x: -25,  y:  75},   // entry
-  {x:  225, y:  75},   // col 4  row 1  → turn south
-  {x:  225, y:  375},  // col 4  row 7  → turn east
-  {x:  475, y:  375},  // col 9  row 7  → turn north
-  {x:  475, y:  75},   // col 9  row 1  → turn east
-  {x:  625, y:  75},   // col 12 row 1  → turn south
-  {x:  625, y:  475},  // col 12 row 9  → turn east
-  {x:  825, y:  475},  // exit (off right)
+// ── Map registry. Each map is just a pair of waypoint lists (pixel centres) —
+// lane A is always present, lane B is optional and (if present) opens on the
+// wave given by laneBStartWave (1 = active from the very first wave). Cell
+// blocking, nearest-path lookup, and wave scaling are all derived generically
+// from these waypoints, so a "new map" is nothing more than new coordinates.
+const MAPS = [
+  { name:'Greenfields', scale:1.0, hasLaneB:true, laneBStartWave:5, boss:'NECROMANCER', eliteChance:0,
+    a:[{x:-25,y:75},{x:225,y:75},{x:225,y:375},{x:475,y:375},{x:475,y:75},{x:625,y:75},{x:625,y:475},{x:825,y:475}],
+    b:[{x:-25,y:425},{x:225,y:425},{x:225,y:575},{x:675,y:575},{x:675,y:425},{x:825,y:425}] },
+  { name:'Twin Hills', scale:1.3, hasLaneB:false, laneBStartWave:99, boss:'NECROMANCER', eliteChance:0.08,
+    a:[{x:-25,y:175},{x:375,y:175},{x:375,y:425},{x:825,y:425}], b:null },
+  { name:'Crossroads', scale:1.6, hasLaneB:true, laneBStartWave:3, boss:'DRAGON', mirrorLanes:true, eliteChance:0.14,
+    a:[{x:-25,y:75},{x:625,y:75},{x:625,y:525},{x:825,y:525}],
+    b:[{x:225,y:625},{x:225,y:325},{x:775,y:325},{x:775,y:-25}] },
+  { name:'Double Trouble', scale:2.0, hasLaneB:true, laneBStartWave:1, boss:'NECROMANCER', mirrorLanes:true, eliteChance:0.2,
+    a:[{x:-25,y:125},{x:775,y:125},{x:775,y:475},{x:825,y:475}],
+    b:[{x:225,y:-25},{x:225,y:575},{x:825,y:575}] },
+  { name:'Blood Canyon', scale:2.5, hasLaneB:true, laneBStartWave:1, boss:'DRAGON', mirrorLanes:true, eliteChance:0.28,
+    a:[{x:-25,y:175},{x:825,y:175}], b:[{x:225,y:-25},{x:225,y:625}] },
+  { name:'Nightmare Keep', scale:3.0, hasLaneB:true, laneBStartWave:1, boss:'BOTH', mirrorLanes:true, eliteChance:0.35,
+    a:[{x:-25,y:75},{x:775,y:75},{x:775,y:525},{x:825,y:525}], b:[{x:375,y:-25},{x:375,y:625}] },
 ];
-const WAYPOINTS_B = [
-  {x: -25,  y: 425},   // entry (row 8, below lane A's whole span)
-  {x:  225, y: 425},   // col 4  row 8  → turn south
-  {x:  225, y: 575},   // col 4  row 11 → turn east
-  {x:  675, y: 575},   // col 13 row 11 → turn north
-  {x:  675, y: 425},   // col 13 row 8  → turn east
-  {x:  825, y: 425},   // exit (off right)
-];
-const LANES = { A: WAYPOINTS_A, B: WAYPOINTS_B };
+
+let currentMapIdx = 0;
+let currentMap = MAPS[0];
+let difficultyMult = 1;
+let WAYPOINTS_A, WAYPOINTS_B, LANES, PATH_CELLS;
+
+let unlockedMaps = 1;
+try { unlockedMaps = JSON.parse(localStorage.getItem('herotopia_unlocked')) || 1; } catch(e) { unlockedMaps = 1; }
+function saveUnlocked() { try { localStorage.setItem('herotopia_unlocked', JSON.stringify(unlockedMaps)); } catch(e) {} }
 
 // find the closest point lying on either lane to (px,py) — used to plant
 // melee warriors directly on the path instead of at the tower's own cell
 function nearestPathPoint(px, py) {
   let best=null, bestDist=Infinity;
   for (const wps of [WAYPOINTS_A, WAYPOINTS_B]) {
+    if (!wps) continue;
     for (let i=1;i<wps.length;i++) {
       const a=wps[i-1], b=wps[i];
       const dx=b.x-a.x, dy=b.y-a.y;
@@ -177,25 +216,40 @@ function nearestPathPoint(px, py) {
   return best;
 }
 
-// ── Which grid cells are path (can't build here) — union of both lanes
-const PATH_CELLS = new Set();
-(function() {
-  const a = (c,r) => PATH_CELLS.add(c+','+r);
-  // lane A
-  for (let c=0;  c<=4;  c++) a(c, 1);
-  for (let r=1;  r<=7;  r++) a(4, r);
-  for (let c=4;  c<=9;  c++) a(c, 7);
-  for (let r=1;  r<=7;  r++) a(9, r);
-  for (let c=9;  c<=12; c++) a(c, 1);
-  for (let r=1;  r<=9;  r++) a(12,r);
-  for (let c=12; c<=15; c++) a(c, 9);
-  // lane B (rows 8/11 + cols 4/13 — entirely clear of lane A)
-  for (let c=0;  c<=4;  c++) a(c, 8);
-  for (let r=8;  r<=11; r++) a(4, r);
-  for (let c=4;  c<=13; c++) a(c, 11);
-  for (let r=8;  r<=11; r++) a(13,r);
-  for (let c=13; c<=15; c++) a(c, 8);
-})();
+// mark every grid cell an axis-aligned waypoint segment passes through —
+// works for any map since all our paths only ever run horizontal/vertical
+function markSegmentCells(a, b, set) {
+  const add = (c,r) => { if (c>=0&&c<COLS&&r>=0&&r<ROWS) set.add(c+','+r); };
+  if (Math.abs(a.y-b.y) < 1) {
+    const row = Math.floor(a.y/CELL);
+    const c1 = Math.floor(Math.min(a.x,b.x)/CELL), c2 = Math.floor(Math.max(a.x,b.x)/CELL);
+    for (let c=c1;c<=c2;c++) add(c,row);
+  } else {
+    const col = Math.floor(a.x/CELL);
+    const r1 = Math.floor(Math.min(a.y,b.y)/CELL), r2 = Math.floor(Math.max(a.y,b.y)/CELL);
+    for (let r=r1;r<=r2;r++) add(col,r);
+  }
+}
+function buildPathCells(laneList) {
+  const set = new Set();
+  for (const wps of laneList) {
+    if (!wps) continue;
+    for (let i=1;i<wps.length;i++) markSegmentCells(wps[i-1], wps[i], set);
+  }
+  return set;
+}
+
+// switch the active map: rebuilds path geometry, blocked cells, and difficulty
+function loadMap(idx) {
+  currentMapIdx = idx;
+  currentMap = MAPS[idx];
+  WAYPOINTS_A = currentMap.a;
+  WAYPOINTS_B = currentMap.hasLaneB ? currentMap.b : null;
+  LANES = { A: WAYPOINTS_A, B: WAYPOINTS_B||WAYPOINTS_A };
+  PATH_CELLS = buildPathCells([WAYPOINTS_A, WAYPOINTS_B]);
+  difficultyMult = currentMap.scale||1;
+  WAVES = buildWavesForMap(currentMap);
+}
 
 // ═══════════════════════════════════════════════════════════
 //  HERO DEFINITIONS
@@ -229,9 +283,14 @@ const HEROES = {
   WARDEN: {
     id:'WARDEN', name:'Soldiers', icon:'🛡️', desc:'Blocks & holds the path', shortcut:'T',
     color:'#f39c12', cost:130, melee:true,
-    meleeDamage:16, meleeRate:1.6, hp:260, engageRadius:36, holdSlow:0.14,
-    respawnTime:6, regen:10,
+    meleeDamage:16, meleeRate:1.6, hp:260, engageRadius:36, holdSlow:0.4,
+    respawnTime:8, regen:6,
     upgrades:[{meleeDamage:26,hp:380,cost:130},{meleeDamage:42,hp:540,cost:260}]
+  },
+  FARM: {
+    id:'FARM', name:'Farm', icon:'🌾', desc:'Generates gold over time', shortcut:'Y',
+    color:'#c9a227', cost:150, farm:true, goldPerSec:1,
+    upgrades:[{goldPerSec:2,cost:150},{goldPerSec:3.5,cost:300}]
   },
 };
 
@@ -250,9 +309,11 @@ const ENEMIES = {
 };
 
 // ═══════════════════════════════════════════════════════════
-//  WAVE DEFINITIONS  (groups spawn sequentially, staggered)
+//  WAVE TEMPLATE  (groups spawn sequentially, staggered) — every map derives
+//  its actual WAVES from this via buildWavesForMap(), scaled per map.scale
 // ═══════════════════════════════════════════════════════════
-const WAVES = [
+let WAVES; // assigned per-map by loadMap()
+const WAVE_TEMPLATE = [
   {label:'Wave 1 — Goblins incoming!',
    groups:[{type:'GOBLIN',count:8,delay:1.5}]},
   {label:'Wave 2 — Bats & Orcs!',
@@ -293,6 +354,42 @@ const WAVES = [
    ]},
 ];
 
+// derive a map's actual 10 waves from the template: scale enemy counts/pace,
+// gate or mirror lane-B groups per the map's lane rules, and reskin the boss
+function buildWavesForMap(map) {
+  const scale = map.scale||1;
+  const countMult = Math.min(2.4, 0.4 + scale*0.6); // scale=1 (Greenfields) reproduces the original template exactly
+  const delayDiv = Math.sqrt(scale);
+  const laneBWave = map.laneBStartWave||5;
+  return WAVE_TEMPLATE.map((wave, wi) => {
+    const waveNo = wi+1;
+    let groups = [];
+    for (const g of wave.groups) {
+      const isB = g.lane==='B';
+      // mirror-mode maps ignore the template's own hand-placed B groups
+      // entirely (they'd double up with the mirror below) and instead
+      // derive lane B purely by cloning lane A, gated by laneBStartWave
+      if (map.mirrorLanes && isB) continue;
+      if (!map.mirrorLanes && isB && (!map.hasLaneB || waveNo < laneBWave)) continue;
+      // bosses scale in toughness (via difficultyMult on hp/reward), never in headcount
+      const cnt = ENEMIES[g.type].boss ? g.count : Math.max(1, Math.round(g.count*countMult));
+      const ng = { type:g.type, count:cnt, delay:Math.max(0.2, g.delay/delayDiv) };
+      if (g.lane) ng.lane = g.lane;
+      groups.push(ng);
+      // never mirror the boss group itself onto lane B — a boss is one set-piece, not two
+      if (map.mirrorLanes && map.hasLaneB && !g.lane && waveNo>=laneBWave && !ENEMIES[g.type].boss) groups.push({...ng, lane:'B'});
+    }
+    // reskin the finale boss per map (template always writes NECROMANCER)
+    if (waveNo===WAVE_TEMPLATE.length && map.boss && map.boss!=='NECROMANCER') {
+      groups = groups.map(g => g.type==='NECROMANCER' ? {...g, type: map.boss==='BOTH'?'NECROMANCER':map.boss} : g);
+      if (map.boss==='BOTH') groups.push({type:'DRAGON', count:1, delay:6});
+    }
+    let label = wave.label.replace(/^Wave \d+/, `Wave ${waveNo}`);
+    if (waveNo===1 && map.hasLaneB && (map.laneBStartWave||5)<=1) label += ' (two fronts from the start!)';
+    return { label, groups };
+  });
+}
+
 // ═══════════════════════════════════════════════════════════
 //  GAME STATE
 // ═══════════════════════════════════════════════════════════
@@ -309,30 +406,99 @@ let prestige = 0;
 try { prestige = JSON.parse(localStorage.getItem('herotopia_prestige')) || 0; } catch(e) { prestige = 0; }
 let lastRunEarned = 0;
 function savePrestige() { try { localStorage.setItem('herotopia_prestige', JSON.stringify(prestige)); } catch(e) {} }
-function prestigeDmgMult() { return 1 + prestige*0.04; }
-function prestigeStartGold() { return 150 + prestige*15; }
+function prestigeDmgMult() { return 1 + Math.min(0.5, prestige*0.01); }   // capped at +50% dmg
+function prestigeStartGold() { return 150 + Math.min(250, prestige*3); } // capped at +250 starting gold
 document.getElementById('prestigeDisplay').textContent =
-  `✨ Prestige: ${prestige}  (+${Math.round(prestige*4)}% hero damage, +${prestige*15} starting gold)`;
+  `✨ Prestige: ${prestige}  (+${Math.round(prestigeDmgMult()*100-100)}% hero damage, +${Math.round(prestigeStartGold()-150)} starting gold)`;
 
-function resetState() {
-  gold = prestigeStartGold(); lives = 20; waveNum = 0; speed = 1;
+function populateMapSelect() {
+  const box = document.getElementById('mapSelect');
+  box.innerHTML = '';
+  MAPS.forEach((m,i) => {
+    const locked = i >= unlockedMaps;
+    const btn = document.createElement('div');
+    btn.className = 'map-btn' + (locked?' locked':'') + (i===currentMapIdx?' selected':'');
+    btn.innerHTML = `<span class="map-num">${locked?'🔒':i+1}</span>${m.name}`;
+    if (!locked) btn.onclick = () => { currentMapIdx = i; populateMapSelect(); };
+    box.appendChild(btn);
+  });
+}
+populateMapSelect();
+
+// ── Run autosave — so a page reload mid-level doesn't lose your towers/progress
+const RUN_SAVE_KEY = 'herotopia_run';
+function saveRun() {
+  if (gameState!=='playing') return;
+  try {
+    localStorage.setItem(RUN_SAVE_KEY, JSON.stringify({
+      mapIdx: currentMapIdx, gold, lives, waveNum, speed,
+      towers: towers.map(t => ({col:t.col, row:t.row, heroId:t.heroId, level:t.level})),
+    }));
+  } catch(e) {}
+}
+function loadRun() {
+  try { const raw = localStorage.getItem(RUN_SAVE_KEY); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
+}
+function clearRun() { try { localStorage.removeItem(RUN_SAVE_KEY); } catch(e) {} }
+setInterval(() => { if (gameState==='playing') saveRun(); }, 5000);
+
+function populateContinueRow() {
+  const box = document.getElementById('continueRow');
+  const saved = loadRun();
+  box.innerHTML = '';
+  if (!saved || !MAPS[saved.mapIdx]) return;
+  const btn = document.createElement('button');
+  btn.className = 'continue-btn';
+  btn.textContent = `▶ CONTINUE — ${MAPS[saved.mapIdx].name}, Wave ${saved.waveNum}, 💰${saved.gold}`;
+  btn.onclick = continueGame;
+  box.appendChild(btn);
+}
+populateContinueRow();
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  try {
+    localStorage.removeItem('herotopia_prestige');
+    localStorage.removeItem('herotopia_unlocked');
+    localStorage.removeItem(RUN_SAVE_KEY);
+  } catch(e) {}
+  location.reload();
+});
+
+function resetState(savedRun) {
+  loadMap(savedRun ? savedRun.mapIdx : currentMapIdx);
+  gold = savedRun ? savedRun.gold : prestigeStartGold();
+  lives = savedRun ? savedRun.lives : 20;
+  waveNum = savedRun ? savedRun.waveNum : 0;
+  speed = savedRun ? savedRun.speed : 1;
   enemies = []; towers = []; projectiles = []; particles = []; aoeEffects = [];
   selectedHeroId = null; selectedTower = null;
   waveActive = false; spawnQueue = []; spawnElapsed = 0; waveCooldown = 0;
   lastTime = null; hoverCell = null; waveLabel = ''; labelTimer = 0;
   gameState = 'playing';
+  if (savedRun) {
+    for (const ts of savedRun.towers) {
+      const t = new Tower(ts.col, ts.row, ts.heroId);
+      for (let i=1; i<ts.level; i++) t.upgrade();
+      towers.push(t);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
 //  ENTITY: ENEMY
 // ═══════════════════════════════════════════════════════════
 class Enemy {
-  constructor(type, lane) {
+  constructor(type, lane, armored) {
     const d = ENEMIES[type];
     this.type = type; this.name = d.name; this.icon = d.icon;
-    this.color = d.color; this.maxHp = d.hp; this.hp = d.hp;
+    this.color = d.color;
+    this.armored = armored||false;
+    const hpMult = difficultyMult * (this.armored?1.6:1);
+    this.maxHp = d.hp*hpMult; this.hp = this.maxHp;
+    this.dmgResist = this.armored ? 0.35 : 0;
     this.baseSpeed = d.speed; this.speed = d.speed;
-    this.reward = d.reward; this.size = d.size; this.boss = d.boss||false;
+    this.reward = Math.round(d.reward*(1+(difficultyMult-1)*0.5)*(this.armored?1.5:1));
+    this.size = d.size; this.boss = d.boss||false;
     this.invisible = d.invisible||false; this.detectRange = d.detectRange||50;
     this.summonInterval = d.summonInterval||0; this.summonTimer = d.summonInterval||0;
     this.lane = lane||'A';
@@ -368,7 +534,7 @@ class Enemy {
   }
 
   hit(dmg, slow, slowDur) {
-    this.hp -= dmg; this.flashTimer = 0.1;
+    this.hp -= dmg*(1-this.dmgResist); this.flashTimer = 0.1;
     if (slow && slow < 1) { this.speed = this.baseSpeed * slow; this.slowTimer = slowDur||2; }
     if (this.hp <= 0) this.dead = true;
   }
@@ -400,6 +566,11 @@ class Enemy {
       ctx.strokeStyle = '#74b9ff'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(x, y, s+5, 0, Math.PI*2); ctx.stroke();
     }
+    // armored ring (silver, tanky "lead" variant — resists a chunk of all damage)
+    if (this.armored) {
+      ctx.strokeStyle = '#cfd8e8'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, s+3, 0, Math.PI*2); ctx.stroke();
+    }
     // emoji icon
     ctx.font = `${s*1.3}px serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -411,8 +582,9 @@ class Enemy {
     ctx.fillStyle = pct>0.5 ? '#2ecc71' : pct>0.25 ? '#f39c12' : '#e74c3c';
     ctx.fillRect(bx, by, bw*pct, bh);
     ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(bx, by, bw, bh);
-    // boss crown
+    // boss crown / armored badge
     if (this.boss) { ctx.font='18px serif'; ctx.fillText('👑', x, y-s-18); }
+    else if (this.armored) { ctx.font='14px serif'; ctx.fillText('🛡️', x+s*0.7, y-s*0.7); }
     ctx.globalAlpha = 1;
   }
 }
@@ -448,6 +620,9 @@ class Tower {
       this.atkCooldown = 0;
       this.warriorPos = nearestPathPoint(this.x, this.y);
     }
+
+    this.farm = d.farm||false;
+    if (this.farm) this.goldPerSec = d.goldPerSec;
   }
 
   totalCost() {
@@ -466,6 +641,8 @@ class Tower {
       this.meleeDamage = u.meleeDamage*prestigeDmgMult();
       this.maxWarriorHp = u.hp;
       this.warriorHp = this.maxWarriorHp; // full heal on upgrade
+    } else if (this.farm) {
+      this.goldPerSec = u.goldPerSec;
     } else {
       this.damage=u.damage*prestigeDmgMult(); this.range=u.range;
       if (u.slow) this.slow=u.slow;
@@ -475,6 +652,7 @@ class Tower {
 
   update(dt) {
     if (this.melee) return this.updateMelee(dt);
+    if (this.farm) { gold += this.goldPerSec*dt; return null; }
     this.cooldown = Math.max(0, this.cooldown-dt);
     if (this.shootAnim>0) this.shootAnim -= dt*5;
     if (this.cooldown>0) return null;
@@ -512,7 +690,7 @@ class Tower {
     }
     for (const e of engaged) e.holdMult = Math.min(e.holdMult, this.holdSlow);
     if (engaged.length>0) {
-      this.warriorHp -= engaged.length*7*dt;
+      this.warriorHp -= engaged.length*10*dt;
       if (this.warriorHp<=0) {
         this.warriorHp=0; this.warriorAlive=false; this.respawnTimer=this.respawnTimeMax;
         burst(wp.x, wp.y, '#e74c3c', 16);
@@ -785,12 +963,16 @@ function tickWave(dt) {
   spawnElapsed += dt;
   while (spawnQueue.length>0 && spawnQueue[0].time<=spawnElapsed) {
     const item = spawnQueue.shift();
-    enemies.push(new Enemy(item.type, item.lane));
+    const armored = !ENEMIES[item.type].boss && Math.random() < (currentMap.eliteChance||0);
+    enemies.push(new Enemy(item.type, item.lane, armored));
   }
   if (spawnQueue.length===0 && enemies.length===0) {
     waveActive=false;
-    if (waveNum>=WAVES.length) { gameState='win'; grantPrestige(); }
-    else { waveCooldown=10; }
+    if (waveNum>=WAVES.length) {
+      gameState='win'; grantPrestige(); clearRun();
+      if (currentMapIdx+2 > unlockedMaps) { unlockedMaps = Math.min(MAPS.length, currentMapIdx+2); saveUnlocked(); }
+    }
+    else { waveCooldown=10; saveRun(); }
   }
 }
 
@@ -809,6 +991,26 @@ function tileRnd(seed) {
   t = Math.imul(t ^ (t>>>15), t | 1);
   t ^= t + Math.imul(t ^ (t>>>7), t | 61);
   return ((t ^ (t>>>14)) >>> 0) / 4294967296;
+}
+
+// small ink-outlined arrow at a lane's entry/exit point, oriented along the
+// path's direction of travel — works regardless of which map edge it's on
+function drawLaneMarker(edgePoint, innerPoint, color, outward) {
+  const dx=innerPoint.x-edgePoint.x, dy=innerPoint.y-edgePoint.y;
+  const len=Math.hypot(dx,dy)||1;
+  let ux=dx/len, uy=dy/len;
+  if (outward) { ux=-ux; uy=-uy; }
+  const cx=Math.max(8,Math.min(MAP_W-8,edgePoint.x)), cy=Math.max(8,Math.min(MAP_H-8,edgePoint.y));
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(Math.atan2(uy,ux));
+  ctx.fillStyle=color; ctx.strokeStyle='#1a1006'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(9,0); ctx.lineTo(-7,-7); ctx.lineTo(-7,7); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function drawLaneMarkers(wps, color) {
+  if (!wps || wps.length<2) return;
+  drawLaneMarker(wps[0], wps[1], color, false);
+  drawLaneMarker(wps[wps.length-1], wps[wps.length-2], color, true);
 }
 
 function drawMap() {
@@ -870,24 +1072,10 @@ function drawMap() {
     ctx.strokeStyle = ok ? '#2ecc71' : '#e74c3c'; ctx.lineWidth=2;
     ctx.strokeRect(c*CELL, r*CELL, CELL, CELL);
   }
-  // entry/exit labels — lane A
-  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,60,68,20);
-  ctx.fillStyle='#f1c40f'; ctx.font='bold 12px Arial';
-  ctx.textAlign='left'; ctx.textBaseline='middle';
-  ctx.fillText('▶ ENTRY', 4, 70);
-  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(MAP_W-65,460,65,20);
-  ctx.fillStyle='#f1c40f'; ctx.textAlign='right';
-  ctx.fillText('EXIT ▶', MAP_W-4, 470);
-  // entry/exit labels — lane B (only once it has opened, wave 5+)
-  if (waveNum>=5) {
-    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,410,80,20);
-    ctx.fillStyle='#ff6b9d'; ctx.font='bold 12px Arial';
-    ctx.textAlign='left';
-    ctx.fillText('▶ ENTRY B', 4, 420);
-    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(MAP_W-77,410,77,20);
-    ctx.fillStyle='#ff6b9d'; ctx.textAlign='right';
-    ctx.fillText('EXIT B ▶', MAP_W-4, 420);
-  }
+  // entry/exit arrow markers — generic so they work for any map's edges
+  drawLaneMarkers(WAYPOINTS_A, '#ffd700');
+  const laneBOpen = currentMap.hasLaneB && waveNum >= (currentMap.laneBStartWave||5);
+  if (laneBOpen) drawLaneMarkers(WAYPOINTS_B, '#ff6b9d');
   // vignette for atmosphere
   const vg = ctx.createRadialGradient(MAP_W/2,MAP_H/2,MAP_H*0.35, MAP_W/2,MAP_H/2,MAP_H*0.85);
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.35)');
@@ -919,7 +1107,7 @@ function drawUI() {
     ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(rx,uy+4,2.5,0,Math.PI*2); ctx.fill();
   }
 
-  // wave label banner
+  // wave label banner (or, when idle, the current map name)
   if (labelTimer>0) {
     ctx.globalAlpha=Math.min(1,labelTimer)*0.9;
     ctx.fillStyle='rgba(255,215,0,0.15)';
@@ -928,6 +1116,10 @@ function drawUI() {
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillText(waveLabel, MAP_W/2, uy+15);
     ctx.globalAlpha=1;
+  } else {
+    ctx.fillStyle='#8a7250'; ctx.font='bold 13px Arial';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(`🗺️ Map ${currentMapIdx+1}: ${currentMap.name}`, MAP_W/2, uy+15);
   }
 
   // Stats row
@@ -958,7 +1150,7 @@ function drawUI() {
 
   // Hero buy buttons
   const heroIds = Object.keys(HEROES);
-  const BW=126, BH=90, GAP=6, startX=8, startY=uy+58;
+  const BW=105, BH=90, GAP=5, startX=8, startY=uy+58;
   heroIds.forEach((id,i) => {
     const d=HEROES[id];
     const bx=startX+i*(BW+GAP), by=startY;
@@ -1011,6 +1203,8 @@ function drawUI() {
     ctx.fillStyle='#4a3a20'; ctx.font='11px Arial';
     if (t.melee) {
       ctx.fillText(`DMG: ${Math.round(t.meleeDamage)}  HP: ${Math.round(t.warriorHp)}/${t.maxWarriorHp}`, px+59, py+26);
+    } else if (t.farm) {
+      ctx.fillText(`💰 +${t.goldPerSec}/sec`, px+59, py+26);
     } else {
       ctx.fillText(`DMG: ${Math.round(t.damage)}  RNG: ${t.range}`, px+59, py+26);
     }
@@ -1050,27 +1244,36 @@ function drawEndScreen() {
   ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,MAP_W,MAP_H+UI_H);
   const cx=MAP_W/2, cy=(MAP_H+UI_H)/2;
   const won=gameState==='win';
-  ctx.fillStyle=won?'#ffd700':'#e74c3c'; ctx.font='bold 60px Arial';
+  const hasNextMap = won && currentMapIdx+1 < MAPS.length;
+  ctx.fillStyle=won?'#ffd700':'#e74c3c'; ctx.font='bold 54px Arial';
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText(won?'🏆 VICTORY!':'💀 GAME OVER', cx, cy-70);
-  ctx.fillStyle='#fff'; ctx.font='24px Arial';
-  ctx.fillText(won?'The kingdom is saved!':'The monsters broke through!', cx, cy-20);
-  ctx.fillStyle='#a78bfa'; ctx.font='17px Arial';
-  ctx.fillText(`Waves: ${waveNum}/${WAVES.length}  |  Lives left: ${lives}  |  Gold: ${gold}`, cx, cy+20);
+  ctx.fillText(won?'🏆 MAP COMPLETE!':'💀 GAME OVER', cx, cy-78);
+  ctx.fillStyle='#fff'; ctx.font='20px Arial';
+  ctx.fillText(won ? (hasNextMap?`${currentMap.name} cleared!`:'ALL MAPS CONQUERED!') : 'The monsters broke through!', cx, cy-36);
+  ctx.fillStyle='#a78bfa'; ctx.font='16px Arial';
+  ctx.fillText(`Waves: ${waveNum}/${WAVES.length}  |  Lives left: ${lives}  |  Gold: ${gold}`, cx, cy);
   // star rating
   const stars = lives>=15?3:lives>=5?2:1;
-  ctx.font='40px serif'; ctx.fillText('⭐'.repeat(stars)+'☆'.repeat(3-stars), cx, cy+70);
+  ctx.font='34px serif'; ctx.fillText('⭐'.repeat(stars)+'☆'.repeat(3-stars), cx, cy+40);
   // prestige earned
-  ctx.fillStyle='#ffd700'; ctx.font='bold 16px Arial';
-  ctx.fillText(`✨ +${lastRunEarned} Prestige (total: ${prestige})`, cx, cy+96);
-  // play again button
-  ctx.fillStyle='#5e2de8'; ctx.beginPath(); ctx.roundRect(cx-130,cy+120,260,52,26); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold 20px Arial'; ctx.fillText('▶ PLAY AGAIN (boosted)', cx, cy+146);
+  ctx.fillStyle='#ffd700'; ctx.font='bold 15px Arial';
+  ctx.fillText(`✨ +${lastRunEarned} Prestige (total: ${prestige})`, cx, cy+66);
+  // buttons
+  if (hasNextMap) {
+    ctx.fillStyle='#2ecc71'; ctx.beginPath(); ctx.roundRect(cx-130,cy+90,260,46,23); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 18px Arial';
+    ctx.fillText(`▶ NEXT MAP: ${MAPS[currentMapIdx+1].name}`, cx, cy+113);
+    ctx.fillStyle='#5e2de8'; ctx.beginPath(); ctx.roundRect(cx-130,cy+142,260,40,20); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 15px Arial'; ctx.fillText('↻ REPLAY THIS MAP', cx, cy+162);
+  } else {
+    ctx.fillStyle='#5e2de8'; ctx.beginPath(); ctx.roundRect(cx-130,cy+100,260,52,26); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 20px Arial'; ctx.fillText('▶ PLAY AGAIN (boosted)', cx, cy+126);
+  }
 }
 
 function computeEarnedPrestige() {
-  const base = waveNum*8 + Math.floor(gold/4);
-  return Math.floor(gameState==='win' ? base*1.5 : base);
+  const base = waveNum*2 + Math.floor(gold/15);
+  return Math.floor(gameState==='win' ? base*1.3 : base);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1089,7 +1292,13 @@ canvas.addEventListener('click', e => {
   const my=(e.clientY-r.top)*(canvas.height/r.height);
   if (gameState==='gameover'||gameState==='win') {
     const cx=MAP_W/2, cy=(MAP_H+UI_H)/2;
-    if (mx>=cx-130&&mx<=cx+130&&my>=cy+120&&my<=cy+172) { startGame(); }
+    const hasNextMap = gameState==='win' && currentMapIdx+1 < MAPS.length;
+    if (hasNextMap) {
+      if (mx>=cx-130&&mx<=cx+130&&my>=cy+90&&my<=cy+136) { currentMapIdx++; startGame(); }
+      else if (mx>=cx-130&&mx<=cx+130&&my>=cy+142&&my<=cy+182) { startGame(); }
+    } else {
+      if (mx>=cx-130&&mx<=cx+130&&my>=cy+100&&my<=cy+152) { startGame(); }
+    }
     return;
   }
   if (gameState!=='playing') return;
@@ -1108,6 +1317,7 @@ function mapClick(mx,my) {
         const t=new Tower(col,row,selectedHeroId);
         towers.push(t); selectedHeroId=null;
         burst(t.x, t.y, d.color, 14);
+        saveRun();
       }
     }
     selectedHeroId=null;
@@ -1128,18 +1338,19 @@ function uiClick(mx,my) {
     const t=selectedTower, px=MAP_W-125, py=uy+58;
     if (mx>=px+4&&mx<=px+56&&my>=py+44&&my<=py+66) {
       const uc=t.upgradeCost();
-      if (uc!==null&&gold>=uc) { gold-=uc; t.upgrade(); burst(t.x,t.y,'#f7dc6f',18); }
+      if (uc!==null&&gold>=uc) { gold-=uc; t.upgrade(); burst(t.x,t.y,'#f7dc6f',18); saveRun(); }
       return;
     }
     if (mx>=px+60&&mx<=px+114&&my>=py+44&&my<=py+66) {
       gold+=t.sellValue(); burst(t.x,t.y,'#f1c40f',12);
       towers=towers.filter(x=>x!==t); deselectTower();
+      saveRun();
       return;
     }
   }
   // Hero buttons
   const heroIds=Object.keys(HEROES);
-  const BW=126,BH=90,GAP=6,startX=8,startY=uy+58;
+  const BW=105,BH=90,GAP=5,startX=8,startY=uy+58;
   heroIds.forEach((id,i)=>{
     const bx=startX+i*(BW+GAP), by=startY;
     if (mx>=bx&&mx<=bx+BW&&my>=by&&my<=by+BH) {
@@ -1162,7 +1373,7 @@ function deselectTower() {
 document.addEventListener('keydown', e => {
   if (gameState!=='playing') return;
   const k=e.key.toLowerCase();
-  const map={'q':'BOLT','w':'BLAZE','e':'CHUNK','r':'FROST','t':'WARDEN'};
+  const map={'q':'BOLT','w':'BLAZE','e':'CHUNK','r':'FROST','t':'WARDEN','y':'FARM'};
   if (map[k]) {
     const id=map[k], d=HEROES[id];
     if (gold>=d.cost) { selectedHeroId=selectedHeroId===id?null:id; deselectTower(); }
@@ -1173,7 +1384,7 @@ document.addEventListener('keydown', e => {
   // upgrade shortcut
   if (k==='u'&&selectedTower) {
     const uc=selectedTower.upgradeCost();
-    if (uc!==null&&gold>=uc) { gold-=uc; selectedTower.upgrade(); burst(selectedTower.x,selectedTower.y,'#f7dc6f',18); }
+    if (uc!==null&&gold>=uc) { gold-=uc; selectedTower.upgrade(); burst(selectedTower.x,selectedTower.y,'#f7dc6f',18); saveRun(); }
   }
 });
 
@@ -1201,7 +1412,7 @@ function gameLoop(ts) {
       if (e.reached) {
         lives -= e.boss?5:1;
         burst(e.x, MAP_H-10, '#e74c3c', 14);
-        if (lives<=0) { lives=0; gameState='gameover'; grantPrestige(); }
+        if (lives<=0) { lives=0; gameState='gameover'; grantPrestige(); clearRun(); }
       } else if (e.dead) {
         gold+=e.reward; burst(e.x,e.y,'#f1c40f',8);
       } else {
@@ -1278,10 +1489,18 @@ function gameLoop(ts) {
 // ═══════════════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════════════
+let loopStarted = false;
 function startGame() {
   document.getElementById('overlay').style.display='none';
   resetState();
-  requestAnimationFrame(gameLoop);
+  if (!loopStarted) { loopStarted = true; requestAnimationFrame(gameLoop); }
+}
+function continueGame() {
+  const saved = loadRun();
+  if (!saved) return startGame();
+  document.getElementById('overlay').style.display='none';
+  resetState(saved);
+  if (!loopStarted) { loopStarted = true; requestAnimationFrame(gameLoop); }
 }
 </script>
 </body>
