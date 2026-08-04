@@ -302,7 +302,7 @@ const ENEMIES = {
   ORC:         {name:'Orc',         icon:'👹', color:'#d35400', hp:250,  speed:55,  reward:22,  size:19},
   SKELETON:    {name:'Skeleton',    icon:'💀', color:'#bdc3c7', hp:165,  speed:78,  reward:16,  size:15},
   TROLL:       {name:'Troll',       icon:'🧌', color:'#8e44ad', hp:620,  speed:34,  reward:48,  size:24},
-  BAT:         {name:'Bat',         icon:'🦇', color:'#4a2f7a', hp:40,   speed:150, reward:14,  size:11},
+  BAT:         {name:'Bat',         icon:'🦇', color:'#4a2f7a', hp:40,   speed:150, reward:14,  size:11, flying:true},
   ASSASSIN:    {name:'Assassin',    icon:'🥷', color:'#1a1a2e', hp:50,   speed:105, reward:24,  size:14, invisible:true},
   DRAGON:      {name:'DRAGON',      icon:'🐉', color:'#c0392b', hp:2800, speed:38,  reward:300, size:32, boss:true},
   NECROMANCER: {name:'Necromancer', icon:'🧙', color:'#4b0082', hp:2200, speed:36,  reward:350, size:30, boss:true, summonInterval:5.5},
@@ -500,6 +500,7 @@ class Enemy {
     this.reward = Math.round(d.reward*(1+(difficultyMult-1)*0.5)*(this.armored?1.5:1));
     this.size = d.size; this.boss = d.boss||false;
     this.invisible = d.invisible||false;
+    this.flying = d.flying||false;
     this.summonInterval = d.summonInterval||0; this.summonTimer = d.summonInterval||0;
     this.lane = lane||'A';
     this.waypoints = LANES[this.lane]||LANES.A;
@@ -666,6 +667,7 @@ class Tower {
       // invisible foes are only targetable by Frost, or by anyone once a Frost
       // slow has revealed them (they go dark again the instant it wears off)
       if (e.invisible && this.heroId!=='FROST' && e.slowTimer<=0) continue;
+      if (e.flying && this.heroId==='CHUNK') continue; // Chunk swings a ground weapon — can't reach flyers
       const dist = Math.hypot(e.x-this.x, e.y-this.y);
       if (dist <= this.range && e.pathProgress>bestP) {
         bestP=e.pathProgress; best=e;
@@ -695,6 +697,7 @@ class Tower {
       // Soldiers aren't Frost — can't engage invisible foes unless a Frost
       // slow has already revealed them
       if (e.invisible && e.slowTimer<=0) continue;
+      if (e.flying) continue; // flying enemies pass straight over a ground blocker
       const dist = Math.hypot(e.x-wp.x, e.y-wp.y);
       if (dist <= this.engageRadius) engaged.push(e);
     }
