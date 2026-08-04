@@ -1414,6 +1414,19 @@ function computeEarnedPrestige() {
 // ═══════════════════════════════════════════════════════════
 //  INPUT HANDLING
 // ═══════════════════════════════════════════════════════════
+canvas.addEventListener('dblclick', e => {
+  if (gameState!=='playing') return;
+  const r=canvas.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(MAP_W/r.width);
+  const my=(e.clientY-r.top)*(canvas.height/r.height);
+  if (my>=MAP_H) return;
+  const col=Math.floor(mx/CELL), row=Math.floor(my/CELL);
+  const t = towers.find(t=>t.col===col&&t.row===row);
+  if (!t) return;
+  const uc = t.upgradeCost();
+  if (uc!==null && gold>=uc) { gold-=uc; t.upgrade(); burst(t.x,t.y,'#f7dc6f',18); saveRun(); }
+});
+
 canvas.addEventListener('mousemove', e => {
   const r=canvas.getBoundingClientRect();
   const mx=(e.clientX-r.left)*(MAP_W/r.width);
