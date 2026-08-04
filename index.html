@@ -259,7 +259,7 @@ const HEROES = {
     id:'BOLT', name:'Bolt', icon:'🏹', desc:'Fast sniper', shortcut:'Q',
     color:'#2ecc71', cost:75, damage:22, range:155, fireRate:1.9,
     projSpeed:290, projColor:'#f1c40f', projSize:5,
-    upgrades:[{damage:38,range:170,cost:75},{damage:62,range:188,cost:150}]
+    upgrades:[{fireRate:2.5,range:170,cost:75},{fireRate:3.2,range:188,cost:150}]
   },
   BLAZE: {
     id:'BLAZE', name:'Blaze', icon:'🔥', desc:'AOE fireball', shortcut:'W',
@@ -283,9 +283,9 @@ const HEROES = {
   WARDEN: {
     id:'WARDEN', name:'Soldiers', icon:'🛡️', desc:'Blocks & holds the path', shortcut:'T',
     color:'#f39c12', cost:130, melee:true,
-    meleeDamage:16, meleeRate:1.6, hp:260, engageRadius:36, holdSlow:0.4,
+    meleeDamage:8, meleeRate:1.6, hp:260, engageRadius:36, holdSlow:0.65,
     respawnTime:8, regen:6,
-    upgrades:[{meleeDamage:26,hp:380,cost:130},{meleeDamage:42,hp:540,cost:260}]
+    upgrades:[{meleeDamage:13,hp:380,cost:130},{meleeDamage:21,hp:540,cost:260}]
   },
   FARM: {
     id:'FARM', name:'Farm', icon:'🌾', desc:'Generates gold over time', shortcut:'Y',
@@ -303,7 +303,7 @@ const ENEMIES = {
   SKELETON:    {name:'Skeleton',    icon:'💀', color:'#bdc3c7', hp:165,  speed:78,  reward:16,  size:15},
   TROLL:       {name:'Troll',       icon:'🧌', color:'#8e44ad', hp:620,  speed:34,  reward:48,  size:24},
   BAT:         {name:'Bat',         icon:'🦇', color:'#4a2f7a', hp:40,   speed:150, reward:14,  size:11},
-  ASSASSIN:    {name:'Assassin',    icon:'🥷', color:'#1a1a2e', hp:50,   speed:105, reward:24,  size:14, invisible:true, detectRange:55},
+  ASSASSIN:    {name:'Assassin',    icon:'🥷', color:'#1a1a2e', hp:50,   speed:105, reward:24,  size:14, invisible:true},
   DRAGON:      {name:'DRAGON',      icon:'🐉', color:'#c0392b', hp:2800, speed:38,  reward:300, size:32, boss:true},
   NECROMANCER: {name:'Necromancer', icon:'🧙', color:'#4b0082', hp:2200, speed:36,  reward:350, size:30, boss:true, summonInterval:5.5},
 };
@@ -499,7 +499,7 @@ class Enemy {
     this.baseSpeed = d.speed; this.speed = d.speed;
     this.reward = Math.round(d.reward*(1+(difficultyMult-1)*0.5)*(this.armored?1.5:1));
     this.size = d.size; this.boss = d.boss||false;
-    this.invisible = d.invisible||false; this.detectRange = d.detectRange||50;
+    this.invisible = d.invisible||false;
     this.summonInterval = d.summonInterval||0; this.summonTimer = d.summonInterval||0;
     this.lane = lane||'A';
     this.waypoints = LANES[this.lane]||LANES.A;
@@ -541,7 +541,7 @@ class Enemy {
 
   draw() {
     const {x, y, size: s} = this;
-    if (this.invisible && this.flashTimer<=0) ctx.globalAlpha = 0.32;
+    if (this.invisible && this.flashTimer<=0 && this.slowTimer<=0) ctx.globalAlpha = 0.32;
     // shadow (grounded contact shadow, cartoon-style)
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.beginPath(); ctx.ellipse(x, y+s+2, s*0.85, s*0.32, 0,0,Math.PI*2); ctx.fill();
@@ -644,7 +644,11 @@ class Tower {
     } else if (this.farm) {
       this.goldPerSec = u.goldPerSec;
     } else {
-      this.damage=u.damage*prestigeDmgMult(); this.range=u.range;
+      // only touch the stats this tier actually specifies — Bolt, for
+      // instance, upgrades fire rate + range and leaves damage flat
+      if (u.damage!==undefined) this.damage=u.damage*prestigeDmgMult();
+      if (u.fireRate!==undefined) this.fireRate=u.fireRate;
+      this.range=u.range;
       if (u.slow) this.slow=u.slow;
     }
     this.level++;
@@ -659,8 +663,10 @@ class Tower {
     let best=null, bestP=-1;
     for (const e of enemies) {
       if (e.dead||e.reached) continue;
+      // invisible foes are only targetable by Frost, or by anyone once a Frost
+      // slow has revealed them (they go dark again the instant it wears off)
+      if (e.invisible && this.heroId!=='FROST' && e.slowTimer<=0) continue;
       const dist = Math.hypot(e.x-this.x, e.y-this.y);
-      if (e.invisible && dist > e.detectRange) continue;
       if (dist <= this.range && e.pathProgress>bestP) {
         bestP=e.pathProgress; best=e;
       }
@@ -686,7 +692,11 @@ class Tower {
     const engaged = [];
     for (const e of enemies) {
       if (e.dead||e.reached) continue;
-      if (Math.hypot(e.x-wp.x, e.y-wp.y) <= this.engageRadius) engaged.push(e);
+      // Soldiers aren't Frost — can't engage invisible foes unless a Frost
+      // slow has already revealed them
+      if (e.invisible && e.slowTimer<=0) continue;
+      const dist = Math.hypot(e.x-wp.x, e.y-wp.y);
+      if (dist <= this.engageRadius) engaged.push(e);
     }
     for (const e of engaged) e.holdMult = Math.min(e.holdMult, this.holdSlow);
     if (engaged.length>0) {
