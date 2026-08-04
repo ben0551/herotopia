@@ -148,6 +148,7 @@ body {
   <div id="creativeContent"></div>
   <div class="creative-btns">
     <button id="creativeApply">Apply Changes</button>
+    <button id="creativeReset">Reset Defaults</button>
     <button id="creativeClose">Close</button>
   </div>
 </div>
@@ -327,6 +328,8 @@ const HEROES = {
     upgrades:[{goldPerSec:2,cost:150},{goldPerSec:3.5,cost:300}]
   },
 };
+// deep snapshot of the original values, for Creative mode's "Reset Defaults"
+const HEROES_DEFAULTS = JSON.parse(JSON.stringify(HEROES));
 
 // ═══════════════════════════════════════════════════════════
 //  ENEMY DEFINITIONS
@@ -541,12 +544,26 @@ function applyCreativeChanges() {
   });
   for (const t of towers) t.refreshFromDef();
 }
+function resetCreativeDefaults() {
+  // mutate each HEROES[id] in place (rather than replacing the object) so
+  // existing towers' `this.def` reference — captured at construction time —
+  // still points at live, now-reset data
+  for (const id of Object.keys(HEROES)) {
+    const defaults = HEROES_DEFAULTS[id];
+    for (const key of Object.keys(defaults)) {
+      HEROES[id][key] = Array.isArray(defaults[key]) ? JSON.parse(JSON.stringify(defaults[key])) : defaults[key];
+    }
+  }
+  for (const t of towers) t.refreshFromDef();
+  buildCreativePanel();
+}
 function toggleCreativePanel() {
   const panel = document.getElementById('creativePanel');
   if (panel.classList.contains('hidden')) { buildCreativePanel(); panel.classList.remove('hidden'); }
   else panel.classList.add('hidden');
 }
 document.getElementById('creativeApply').addEventListener('click', applyCreativeChanges);
+document.getElementById('creativeReset').addEventListener('click', resetCreativeDefaults);
 document.getElementById('creativeClose').addEventListener('click', toggleCreativePanel);
 
 let cheatBuffer = '';
