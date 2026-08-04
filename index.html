@@ -112,11 +112,45 @@ body {
   line-height: 1.8;
 }
 .tips span { color: #a78bfa; }
+
+/* ── Creative mode (secret debug menu — type "creative" during play) ── */
+.creative-panel {
+  position: fixed; inset: 4% 8%; z-index: 200;
+  background: #0a0e0a; border: 3px solid #39ff6a; border-radius: 8px;
+  padding: 16px 20px; overflow-y: auto;
+  font-family: 'Consolas', monospace; color: #39ff6a;
+  box-shadow: 0 0 40px rgba(57,255,106,0.4);
+}
+.creative-panel.hidden { display: none; }
+.creative-panel h2 { margin-bottom: 10px; letter-spacing: 2px; }
+.creative-hero { border-bottom: 1px solid #1a3a1f; margin-bottom: 10px; padding-bottom: 8px; }
+.creative-hero b { color: #9dffb0; }
+.creative-hero i { color: #6a9a75; font-style: normal; font-size: 11px; }
+.creative-hero label { display: inline-block; margin: 3px 8px 3px 0; font-size: 11px; white-space: nowrap; }
+.creative-hero input {
+  width: 70px; background: #000; color: #39ff6a; border: 1px solid #2a5a35;
+  font-family: inherit; font-size: 11px; padding: 2px 4px; margin-left: 3px;
+}
+.creative-btns { position: sticky; bottom: 0; background: #0a0e0a; padding-top: 10px; }
+.creative-btns button {
+  font-family: inherit; padding: 8px 18px; margin-right: 10px; cursor: pointer;
+  border-radius: 6px; border: 1px solid #39ff6a; background: #142418; color: #39ff6a; font-weight: bold;
+}
+.creative-btns button:hover { background: #1e3a26; }
 </style>
 </head>
 <body>
 
 <canvas id="gameCanvas"></canvas>
+
+<div id="creativePanel" class="creative-panel hidden">
+  <h2>🛠️ CREATIVE MODE — edit hero stats live</h2>
+  <div id="creativeContent"></div>
+  <div class="creative-btns">
+    <button id="creativeApply">Apply Changes</button>
+    <button id="creativeClose">Close</button>
+  </div>
+</div>
 
 <div id="overlay">
   <div class="big-title">HEROTOPIA</div>
@@ -449,7 +483,7 @@ function populateContinueRow() {
   if (!saved || !MAPS[saved.mapIdx]) return;
   const btn = document.createElement('button');
   btn.className = 'continue-btn';
-  btn.textContent = `▶ CONTINUE — ${MAPS[saved.mapIdx].name}, Wave ${saved.waveNum}, 💰${saved.gold}`;
+  btn.textContent = `▶ CONTINUE — ${MAPS[saved.mapIdx].name}, Wave ${saved.waveNum}, 💰${saved.gold.toFixed(2)}`;
   btn.onclick = continueGame;
   box.appendChild(btn);
 }
@@ -462,6 +496,64 @@ document.getElementById('resetBtn').addEventListener('click', () => {
     localStorage.removeItem(RUN_SAVE_KEY);
   } catch(e) {}
   location.reload();
+});
+
+// ── Creative mode — secret hero-stat editor. Type "creative" anywhere to
+// toggle it; every non-cosmetic field on every HEROES entry (base stats +
+// both upgrade tiers) gets a live-editable input, generically introspected
+// so new heroes/fields need no extra UI code.
+const CREATIVE_SKIP_FIELDS = new Set(['id','name','icon','desc','shortcut','color','upgrades','melee','farm']);
+function getPath(obj, path) {
+  return path.split('.').reduce((o,k) => o[k], obj);
+}
+function setPath(obj, path, val) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i=0; i<parts.length-1; i++) cur = cur[parts[i]];
+  cur[parts[parts.length-1]] = val;
+}
+function buildCreativePanel() {
+  const box = document.getElementById('creativeContent');
+  box.innerHTML = '';
+  for (const id of Object.keys(HEROES)) {
+    const d = HEROES[id];
+    const sec = document.createElement('div');
+    sec.className = 'creative-hero';
+    let html = `<b>${d.icon} ${d.name} (${id})</b><br>`;
+    for (const key of Object.keys(d)) {
+      if (CREATIVE_SKIP_FIELDS.has(key)) continue;
+      html += `<label>${key}<input type="number" step="any" data-path="${id}.${key}" value="${getPath(HEROES, id+'.'+key)}"></label>`;
+    }
+    d.upgrades.forEach((u,i) => {
+      html += `<br><i>upgrade ${i+1}:</i> `;
+      for (const key of Object.keys(u)) {
+        html += `<label>${key}<input type="number" step="any" data-path="${id}.upgrades.${i}.${key}" value="${u[key]}"></label>`;
+      }
+    });
+    sec.innerHTML = html;
+    box.appendChild(sec);
+  }
+}
+function applyCreativeChanges() {
+  document.querySelectorAll('#creativeContent input[data-path]').forEach(inp => {
+    const val = parseFloat(inp.value);
+    if (!isNaN(val)) setPath(HEROES, inp.dataset.path, val);
+  });
+  for (const t of towers) t.refreshFromDef();
+}
+function toggleCreativePanel() {
+  const panel = document.getElementById('creativePanel');
+  if (panel.classList.contains('hidden')) { buildCreativePanel(); panel.classList.remove('hidden'); }
+  else panel.classList.add('hidden');
+}
+document.getElementById('creativeApply').addEventListener('click', applyCreativeChanges);
+document.getElementById('creativeClose').addEventListener('click', toggleCreativePanel);
+
+let cheatBuffer = '';
+document.addEventListener('keydown', e => {
+  if (e.key.length !== 1) return;
+  cheatBuffer = (cheatBuffer + e.key.toLowerCase()).slice(-8);
+  if (cheatBuffer === 'creative') { toggleCreativePanel(); cheatBuffer = ''; }
 });
 
 function resetState(savedRun) {
@@ -634,6 +726,36 @@ class Tower {
   sellValue()  { return Math.floor(this.totalCost()*0.5); }
   canUpgrade() { return this.level <= this.def.upgrades.length; }
   upgradeCost(){ return this.canUpgrade() ? this.def.upgrades[this.level-1].cost : null; }
+
+  // re-derive every live stat from this.def (base + upgrade chain up to
+  // current level) — used by Creative mode so edits to HEROES propagate to
+  // towers already on the field, not just newly-placed ones
+  refreshFromDef() {
+    const d = this.def;
+    if (this.melee) {
+      this.meleeDamage = d.meleeDamage*prestigeDmgMult();
+      this.maxWarriorHp = d.hp;
+      this.engageRadius = d.engageRadius; this.holdSlow = d.holdSlow;
+      this.respawnTimeMax = d.respawnTime; this.regen = d.regen;
+    } else if (this.farm) {
+      this.goldPerSec = d.goldPerSec;
+    } else {
+      this.damage = (d.damage||0)*prestigeDmgMult(); this.range = d.range||0; this.fireRate = d.fireRate||0;
+      this.slow = d.slow||0; this.slowDuration = d.slowDuration||0;
+    }
+    for (let i=0; i<this.level-1; i++) {
+      const u = d.upgrades[i];
+      if (this.melee) { this.meleeDamage=u.meleeDamage*prestigeDmgMult(); this.maxWarriorHp=u.hp; }
+      else if (this.farm) { this.goldPerSec=u.goldPerSec; }
+      else {
+        if (u.damage!==undefined) this.damage=u.damage*prestigeDmgMult();
+        if (u.fireRate!==undefined) this.fireRate=u.fireRate;
+        this.range=u.range;
+        if (u.slow) this.slow=u.slow;
+      }
+    }
+    if (this.melee) this.warriorHp = Math.min(this.warriorHp, this.maxWarriorHp);
+  }
 
   upgrade() {
     if (!this.canUpgrade()) return;
@@ -1139,7 +1261,7 @@ function drawUI() {
   const sy = uy + 36;
   ctx.fillStyle='#f1c40f'; ctx.font='bold 17px Arial';
   ctx.textAlign='left'; ctx.textBaseline='middle';
-  ctx.fillText(`💰 ${gold}`, 12, sy);
+  ctx.fillText(`💰 ${gold.toFixed(2)}`, 12, sy);
   ctx.fillStyle='#e74c3c';
   ctx.fillText(`❤️ ${lives}`, 150, sy);
   ctx.fillStyle='#a78bfa';
@@ -1264,7 +1386,7 @@ function drawEndScreen() {
   ctx.fillStyle='#fff'; ctx.font='20px Arial';
   ctx.fillText(won ? (hasNextMap?`${currentMap.name} cleared!`:'ALL MAPS CONQUERED!') : 'The monsters broke through!', cx, cy-36);
   ctx.fillStyle='#a78bfa'; ctx.font='16px Arial';
-  ctx.fillText(`Waves: ${waveNum}/${WAVES.length}  |  Lives left: ${lives}  |  Gold: ${gold}`, cx, cy);
+  ctx.fillText(`Waves: ${waveNum}/${WAVES.length}  |  Lives left: ${lives}  |  Gold: ${gold.toFixed(2)}`, cx, cy);
   // star rating
   const stars = lives>=15?3:lives>=5?2:1;
   ctx.font='34px serif'; ctx.fillText('⭐'.repeat(stars)+'☆'.repeat(3-stars), cx, cy+40);
